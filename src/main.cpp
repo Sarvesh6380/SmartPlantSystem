@@ -14,7 +14,8 @@
 #define WIFI_SSID     "1234ABCD"
 #define WIFI_PASSWORD "ABCD1234"
 #define API_KEY       "AIzaSyBcfKljXgucdPWl6J-EXvwZM0snNCjBedw"
-#define DATABASE_URL  "htttps://smartplantcare-1f8f3-default-rtdb.firebaseio.com"
+// FIX: SSL/ERRNO113: Corrected malformed URL protocol ('htttps://' to 'https://') which causes SSL parsing to fail.
+#define DATABASE_URL  "https://smartplantcare-1f8f3-default-rtdb.firebaseio.com"
 
 // ═══════════════════════════════════════════════════════════
 //  PIN MAPPING (ESP32-S3)
@@ -64,6 +65,8 @@ bool  pumpStateChanged = false;
 bool  dhtOk         = false;
 bool  manualOverride = false;
 bool  manualPumpOn   = false;
+
+unsigned int failedUploadCount = 0; // FIX: SSL/ERRNO113: Track consecutive upload failures for connection retry backoff
 
 unsigned long lastSensorRead     = 0;
 unsigned long lastFirebaseUpload = 0;
@@ -538,7 +541,8 @@ void loop() {
   handleSerialCommands();
 
   // ── Firebase: read manual commands every 3 s ──────────────
-  if (Firebase.ready() && millis() - lastControlCheck >= 3000) {
+  // FIX: SSL/ERRNO113: Ensure WiFi is connected before attempting Firebase operation to prevent TCP stack aborts.
+  if (WiFi.status() == WL_CONNECTED && Firebase.ready() && millis() - lastControlCheck >= 3000) {
     lastControlCheck = millis();
     bool prevOverride = manualOverride;
     
@@ -634,7 +638,8 @@ void loop() {
   }
 
   // ── Firebase upload every 5 s ────────────────────────────
-  if (Firebase.ready() && (millis() - lastFirebaseUpload > 5000 || lastFirebaseUpload == 0)) {
+  // FIX: SSL/ERRNO113: Check WiFi status to prevent lingering TCP attempts when router connection is lost.
+  if (WiFi.status() == WL_CONNECTED && Firebase.ready() && (millis() - lastFirebaseUpload > 5000 || lastFirebaseUpload == 0)) {
     lastFirebaseUpload = millis();
     FirebaseJson json;
     json.set("temp",     temperature);
@@ -646,9 +651,19 @@ void loop() {
     json.set("uptime",   (int)(millis() / 1000));
     if (Firebase.RTDB.setJSON(&fbdo, "/PlantData", &json)) {
       Serial.println("[Firebase] Upload: OK");
+      failedUploadCount = 0; // Reset counter on success
     } else {
       Serial.print("[Firebase] Upload FAILED: ");
       Serial.println(fbdo.errorReason());
+      
+      // FIX: SSL/ERRNO113: Implement connection retry mechanism. Reboot WiFi stack after 3 consecutive failures.
+      failedUploadCount++;
+      if (failedUploadCount >= 3) {
+        Serial.println("[SSL/WIFI] Consecutive failures maxed out. Forcing WiFi reconnect...");
+        WiFi.disconnect();
+        WiFi.reconnect();
+        failedUploadCount = 0;
+      }
     }
   }
 
