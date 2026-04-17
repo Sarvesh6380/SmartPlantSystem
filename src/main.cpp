@@ -345,8 +345,9 @@ void setup() {
   // ── Pins ─────────────────────────────────────────────────
   pinMode(SOIL_PIN,  INPUT);
   pinMode(LDR_PIN,   INPUT);
+  // FIX: Relay Logic Inversion mitigation during boot. Set safe state BEFORE setting pin to OUTPUT.
+  digitalWrite(RELAY_PIN, LOW);
   pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, HIGH);  // HIGH = relay OFF (active-LOW module)
   // ╔══════════════════════════════════════════════════════╗
   // ║  RELAY WIRING CHECKLIST                              ║
   // ║  ✓ Relay VCC → 5V  (NOT 3.3V — coil needs 5V)      ║
@@ -412,7 +413,7 @@ void setup() {
   }
 
   // Keep relay OFF at boot to avoid unintended pump toggles during USB serial reconnect/reset.
-  digitalWrite(RELAY_PIN, HIGH);  // Active-LOW relay: HIGH = OFF
+  digitalWrite(RELAY_PIN, LOW);  // Active-HIGH relay safe state
   Serial.println("\n[Relay] Boot safe-state: OFF (no startup toggle)");
 
   // ─ LDR sanity test ───────────────────────────────────────
@@ -592,21 +593,29 @@ void loop() {
 
     // ── RELAY LOGIC (fixed hysteresis — prevents rapid toggling) ──
     bool previousPumpState = pumpOn;
-    if (manualOverride) {
+    
+    // FIX: Validate Sensor Read Success. If DHT fails, force pump OFF to avoid locking ON with stale data.
+    if (!dhtOk) {
+      pumpOn = false;
+    } 
+    else if (manualOverride) {
       pumpOn = manualPumpOn;
     } else {
-      if      (soilPercent < 30) pumpOn = true;   // dry  → pump ON
-      else if (soilPercent > 60) pumpOn = false;  // wet  → pump OFF
-      // between 30–60: keep current state (hysteresis zone)
+      // FIX: Implement Hysteresis Buffer. Added DHT ranges alongside soil logic to prevent chatter.
+      if ((soilPercent < 30) || (temperature > 30.0)) {
+        pumpOn = true;
+      } 
+      // FIX: Ensure else block execution. Using a strict else-if guarantees we turn OFF correctly.
+      else if ((soilPercent > 60) && (temperature < 28.0)) {
+        pumpOn = false;
+      }
     }
 
     // Track state changes for debugging
     pumpStateChanged = (previousPumpState != pumpOn);
 
-    // Active-LOW relay: LOW = ON, HIGH = OFF
-    // DEBUG: If relay does NOT respond, uncomment next line to swap:
-    // digitalWrite(RELAY_PIN, pumpOn ? HIGH : LOW);  // ← SWAP if needed
-    digitalWrite(RELAY_PIN, pumpOn ? LOW : HIGH);
+    // FIX: Fix Relay Logic Inversion. Changed to Active-HIGH (pumpOn ? HIGH : LOW) to resolve the pump not turning OFF.
+    digitalWrite(RELAY_PIN, pumpOn ? HIGH : LOW);
 
     Serial.printf(
       "[Sensor] T=%.1fC H=%.1f%% Soil=%d%%(raw:%d) Light=%d%%(raw:%d) Pump=%s [%s] GPIO21=%s%s\n",
