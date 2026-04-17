@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Smart Plant Care</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Crimson+Pro:ital,wght@0,300;0,400;1,300&display=swap" rel="stylesheet"/>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+  <style>
+    :root {
+      --bg:        #080f09;
+      --surface:   #0e1a10;
+      --surface2:  #132016;
+      --surface3:  #182b1d;
+      --border:    #1e3322;
+      --border2:   #2a4533;
+      --green:     #5ddb82;
+      --green-dim: #5ddb8222;
+      --green-mid: #5ddb8255;
+      --amber:     #f0a832;
+      --amber-dim: #f0a83222;
+      --amber-mid: #f0a83255;
+      --blue:      #5db8f0;
+      --blue-dim:  #5db8f022;
+      --blue-mid:  #5db8f055;
+      --red:       #f05d5d;
+      --red-dim:   #f05d5d18;
+      --red-mid:   #f05d5d55;
+      --red-bright:#ff3a3a;
+      --muted:     #3d6b4f;
+      --text:      #c8e8d0;
+      --text-dim:  #5a8a6a;
+      --text-dim2: #3a5a48;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Syne', sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; padding: 24px 16px 60px;
+      background-image:
+        radial-gradient(ellipse 80% 40% at 50% -10%, #1a4a2a33 0%, transparent 60%),
+        radial-gradient(ellipse 40% 30% at 90% 80%,  #0a2a1a22 0%, transparent 50%);
+    }
+
+    /* ════════════════════════════════════════
+       ALERT MODAL — full-screen takeover
+       Can't be ignored; user must dismiss
+    ════════════════════════════════════════ */
+    #alert-modal {
+      display: none;
+      position: fixed; inset: 0; z-index: 99999;
+      background: rgba(5, 10, 6, 0.92);
+      backdrop-filter: blur(6px);
+      align-items: center; justify-content: center;
+      animation: modalBgIn .3s ease;
+    }
+    #alert-modal.visible { display: flex; }
+    @keyframes modalBgIn { from{opacity:0} to{opacity:1} }
+
+    .modal-box {
+      background: var(--surface);
+      border: 2px solid var(--red);
+      border-radius: 24px;
+      padding: 36px 32px 28px;
+      max-width: 420px; width: 90%;
+      box-shadow: 0 0 60px #f05d5d33, 0 24px 60px #00000088;
+      animation: modalBoxIn .35s cubic-bezier(.2,1.4,.4,1);
+      position: relative; overflow: hidden;
+    }
+    @keyframes modalBoxIn { from{transform:scale(.88) translateY(24px);opacity:0} to{transform:scale(1) translateY(0);opacity:1} }
+
+    /* pulsing red border glow */
+    .modal-box::before {
+      content: '';
+      position: absolute; inset: -2px; border-radius: 26px;
+      border: 2px solid var(--red);
+      animation: modalGlow 1.5s ease-in-out infinite;
+      pointer-events: none;
+    }
+    @keyframes modalGlow {
+      0%,100% { box-shadow: 0 0 12px #f05d5d44; }
+      50%      { box-shadow: 0 0 36px #f05d5d99; }
+    }
+
+    .modal-icon {
+      width: 56px; height: 56px; border-radius: 50%;
+      background: var(--red-dim); border: 2px solid var(--red-mid);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 26px; margin: 0 auto 18px;
+      animation: iconPulse 1s ease-in-out infinite;
+    }
+    @keyframes iconPulse {
+      0%,100% { transform: scale(1);    box-shadow: 0 0 0 0    #f05d5d44; }
+      50%      { transform: scale(1.08); box-shadow: 0 0 0 10px #f05d5d00; }
+    }
+
+    .modal-title {
+      font-size: 1.1rem; font-weight: 800; letter-spacing: .06em;
+      color: var(--red); text-align: center; text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .modal-sensor {
+      font-family: 'Crimson Pro', serif; font-style: italic;
+      font-size: 1rem; color: var(--text-dim); text-align: center;
+      margin-bottom: 18px;
+    }
+
+    /* big value readout inside modal */
+    .modal-reading {
+      background: var(--surface2); border: 1px solid var(--red-mid);
+      border-radius: 14px; padding: 14px 20px; margin-bottom: 18px;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px;
+    }
+    .modal-reading-label { font-size: .65rem; text-transform: uppercase; letter-spacing: .14em; color: var(--text-dim); }
+    .modal-reading-val   { font-family: 'Crimson Pro', serif; font-size: 2.6rem; font-weight: 300; color: var(--red-bright); line-height: 1; }
+    .modal-reading-unit  { font-size: .75rem; color: var(--text-dim); margin-top: 2px; }
+    .modal-threshold     { font-size: .72rem; color: var(--text-dim); margin-top: 4px; }
+
+    /* queue badge */
+    .modal-queue {
+      font-size: .65rem; text-transform: uppercase; letter-spacing: .1em;
+      color: var(--amber); background: var(--amber-dim); border: 1px solid var(--amber-mid);
+      border-radius: 99px; padding: 3px 10px; display: inline-block; margin-bottom: 14px;
+    }
+    .modal-queue.hidden { display: none; }
+
+    /* dismiss / snooze buttons */
+    .modal-btns { display: flex; gap: 10px; }
+    .modal-btn {
+      flex: 1; padding: 12px 10px; border-radius: 12px;
+      font-family: 'Syne', sans-serif; font-size: .78rem; font-weight: 700;
+      letter-spacing: .08em; cursor: pointer; border: 1px solid;
+      transition: all .2s;
+    }
+    .btn-dismiss {
+      background: var(--red-dim); border-color: var(--red); color: var(--red);
+    }
+    .btn-dismiss:hover { background: var(--red-mid); box-shadow: 0 0 18px #f05d5d33; }
+    .btn-snooze {
+      background: var(--surface2); border-color: var(--border2); color: var(--text-dim);
+    }
+    .btn-snooze:hover { border-color: var(--amber); color: var(--amber); }
+
+    /* progress bar — auto-dismiss timer */
+    .modal-timer { height: 3px; background: var(--border); border-radius: 99px; margin-top: 16px; overflow: hidden; }
+    .modal-timer-fill { height: 100%; background: var(--red); border-radius: 99px; width: 100%; transition: none; }
+
+    /* ════════════════════════════════════════
+       TOAST — secondary, non-blocking notice
+    ════════════════════════════════════════ */
+    #toast-stack {
+      position: fixed; bottom: 24px; right: 20px; z-index: 9998;
+      display: flex; flex-direction: column-reverse; gap: 8px; max-width: 300px;
+    }
+    .toast {
+      background: var(--surface3); border: 1px solid var(--border2);
+      border-left: 3px solid var(--amber); border-radius: 10px;
+      padding: 10px 14px; font-size: .72rem; color: var(--text);
+      animation: toastIn .25s ease; cursor: pointer;
+    }
+    @keyframes toastIn  { from{transform:translateX(110%);opacity:0} to{transform:translateX(0);opacity:1} }
+    @keyframes toastOut { to  {transform:translateX(110%);opacity:0} }
+    .toast-title { font-size: .62rem; font-weight: 700; color: var(--amber); letter-spacing: .08em; margin-bottom: 2px; }
+
+    /* ════════════════════════════════════════
+       HEADER
+    ════════════════════════════════════════ */
+    .header {
+      max-width: 960px; margin: 0 auto 28px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 12px; padding-bottom: 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .logo-ring {
+      width: 44px; height: 44px; border-radius: 50%;
+      border: 1.5px solid var(--green);
+      display: flex; align-items: center; justify-content: center; font-size: 22px;
+      animation: breathe 4s ease-in-out infinite;
+    }
+    @keyframes breathe {
+      0%,100%{ box-shadow:0 0 16px var(--green-dim) }
+      50%    { box-shadow:0 0 32px var(--green-mid) }
+    }
+    .brand-text h1 { font-size:1.3rem; font-weight:800; color:var(--green); letter-spacing:.04em; line-height:1; }
+    .brand-text p  { font-family:'Crimson Pro',serif; font-style:italic; font-size:.85rem; color:var(--text-dim); margin-top:2px; }
+
+    /* alert bell in header */
+    .header-right { display:flex; align-items:center; gap:10px; }
+    .alert-bell-btn {
+      position: relative; width:38px; height:38px; border-radius:50%;
+      background: var(--surface2); border:1px solid var(--border);
+      display:flex; align-items:center; justify-content:center;
+      cursor:pointer; font-size:17px; transition:all .2s;
+    }
+    .alert-bell-btn:hover { border-color:var(--red); background:var(--red-dim); }
+    .bell-badge {
+      position:absolute; top:2px; right:2px; width:14px; height:14px;
+      border-radius:50%; background:var(--red); font-size:8px; font-weight:800;
+      color:#fff; display:flex; align-items:center; justify-content:center;
+      border:1.5px solid var(--bg); display:none;
+    }
+    .bell-badge.visible { display:flex; }
+    .live-pill {
+      display:flex; align-items:center; gap:8px;
+      background:var(--surface2); border:1px solid var(--border);
+      border-radius:99px; padding:6px 14px;
+      font-size:.72rem; letter-spacing:.08em; color:var(--text-dim); transition:all .4s;
+    }
+    .live-pill.online { border-color:var(--green); color:var(--green); background:var(--green-dim); }
+    .live-dot { width:7px; height:7px; border-radius:50%; background:var(--muted); transition:all .4s; }
+    .live-pill.online .live-dot { background:var(--green); animation:ping 1.8s ease-in-out infinite; }
+    @keyframes ping { 0%,100%{box-shadow:0 0 0 3px var(--green-dim)} 50%{box-shadow:0 0 0 7px transparent} }
+
+    /* ════════════════════════════════════════
+       GRID + CARDS
+    ════════════════════════════════════════ */
+    .grid { max-width:960px; margin:0 auto; display:grid; grid-template-columns:repeat(12,1fr); gap:14px; }
+    .span-3  { grid-column:span 3; }
+    .span-6  { grid-column:span 6; }
+    .span-12 { grid-column:span 12; }
+    @media(max-width:720px){ .span-3{grid-column:span 6} .span-6{grid-column:span 12} }
+    @media(max-width:440px){ .span-3,.span-6,.span-12{grid-column:span 12} }
+
+    .card {
+      background:var(--surface); border:1px solid var(--border);
+      border-radius:20px; padding:20px 18px; position:relative; overflow:hidden;
+      transition:border-color .3s, transform .2s;
+      animation:fadeUp .5s ease both;
+    }
+    .card:hover { transform:translateY(-2px); border-color:var(--border2); }
+    @keyframes fadeUp { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+    .card::after { content:''; position:absolute; top:0; left:0; right:0; height:1px; background:linear-gradient(90deg,transparent,var(--accent-line,transparent),transparent); }
+    .card:nth-child(1){animation-delay:.05s}.card:nth-child(2){animation-delay:.10s}
+    .card:nth-child(3){animation-delay:.15s}.card:nth-child(4){animation-delay:.20s}
+    .card:nth-child(5){animation-delay:.25s}.card:nth-child(6){animation-delay:.30s}
+    .card:nth-child(7){animation-delay:.35s}.card:nth-child(8){animation-delay:.40s}
+
+    .c-label { font-size:.62rem; text-transform:uppercase; letter-spacing:.18em; color:var(--text-dim); margin-bottom:10px; display:flex; align-items:center; gap:6px; }
+    .c-icon  { width:18px; height:18px; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:11px; }
+    .c-val   { font-family:'Crimson Pro',serif; font-size:3.4rem; font-weight:300; line-height:1; color:var(--green); transition:color .5s; }
+    .c-val.warn  { color:var(--amber); }
+    .c-val.alert { color:var(--red); }
+    .c-unit  { font-size:.7rem; color:var(--text-dim); margin-top:5px; letter-spacing:.06em; }
+
+    /* ring gauges */
+    .ring-wrap  { display:flex; align-items:center; gap:16px; margin-top:4px; }
+    .ring-track { fill:none; stroke:var(--border2); stroke-width:5; }
+    .ring-fill  { fill:none; stroke-width:5; stroke-linecap:round; stroke-dasharray:163; stroke-dashoffset:163; transform:rotate(-90deg); transform-origin:50% 50%; transition:stroke-dashoffset 1s cubic-bezier(.4,0,.2,1), stroke .5s; }
+    .ring-lbl   { font-family:'Crimson Pro',serif; font-size:1.5rem; font-weight:300; fill:var(--text); }
+    .ring-sub   { font-size:.65rem; fill:var(--text-dim); }
+    .bar-bg     { height:8px; background:var(--border2); border-radius:99px; margin-top:14px; overflow:hidden; }
+    .bar-fill   { height:100%; border-radius:99px; background:linear-gradient(90deg,var(--amber),var(--green)); transition:width 1s cubic-bezier(.4,0,.2,1); width:0%; }
+    .bar-lbls   { display:flex; justify-content:space-between; margin-top:5px; font-size:.6rem; color:var(--text-dim); }
+
+    /* pump card */
+    .pump-badge { display:inline-flex; align-items:center; gap:8px; padding:8px 16px; border-radius:99px; font-size:.78rem; font-weight:700; letter-spacing:.08em; background:var(--border); color:var(--text-dim); border:1px solid var(--border2); transition:all .5s; }
+    .pump-badge.active { background:var(--blue-dim); color:var(--blue); border-color:var(--blue); box-shadow:0 0 16px var(--blue-dim); }
+    .pump-badge .dot   { width:7px; height:7px; border-radius:50%; background:var(--muted); transition:all .5s; }
+    .pump-badge.active .dot { background:var(--blue); animation:ping 1s infinite; }
+    .pump-note { font-family:'Crimson Pro',serif; font-style:italic; font-size:.82rem; color:var(--text-dim); margin-top:8px; }
+    .mode-tag  { font-size:.6rem; text-transform:uppercase; letter-spacing:.12em; padding:3px 9px; border-radius:99px; background:var(--green-dim); color:var(--green); border:1px solid var(--green-mid); transition:all .3s; }
+    .mode-tag.manual { background:var(--amber-dim); color:var(--amber); border-color:var(--amber-mid); }
+    .manual-panel  { margin-top:16px; padding:14px 16px; background:var(--surface2); border:1px solid var(--border); border-radius:14px; }
+    .manual-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+    .manual-title  { font-size:.65rem; text-transform:uppercase; letter-spacing:.14em; color:var(--text-dim); }
+    .toggle-wrap   { display:flex; align-items:center; gap:8px; }
+    .toggle-lbl    { font-size:.7rem; color:var(--text-dim); min-width:24px; }
+    .toggle        { position:relative; width:40px; height:22px; display:inline-block; }
+    .toggle input  { opacity:0; width:0; height:0; }
+    .toggle-slider { position:absolute; inset:0; background:var(--border2); border-radius:99px; transition:background .3s; }
+    .toggle-slider::before { content:''; position:absolute; width:16px; height:16px; border-radius:50%; background:var(--text-dim); top:3px; left:3px; transition:transform .3s, background .3s; }
+    .toggle input:checked + .toggle-slider { background:var(--amber-dim); border:1px solid var(--amber); }
+    .toggle input:checked + .toggle-slider::before { transform:translateX(18px); background:var(--amber); }
+    .manual-btns { display:flex; gap:8px; }
+    .pump-btn    { flex:1; padding:10px; border-radius:10px; border:1px solid var(--border2); font-family:'Syne',sans-serif; font-size:.78rem; font-weight:700; letter-spacing:.08em; cursor:pointer; transition:all .25s; background:var(--surface3); color:var(--text-dim); }
+    .pump-btn:disabled  { opacity:.3; cursor:not-allowed; }
+    .pump-btn.on-btn    { border-color:var(--blue); color:var(--blue); }
+    .pump-btn.off-btn   { border-color:var(--red);  color:var(--red); }
+    .pump-btn.on-btn:hover:not(:disabled)  { background:var(--blue-dim); }
+    .pump-btn.off-btn:hover:not(:disabled) { background:var(--red-dim); }
+    .pump-btn.btn-active-on  { background:var(--blue-dim)!important; border-color:var(--blue)!important; color:var(--blue)!important; }
+    .pump-btn.btn-active-off { background:var(--red-dim)!important;  border-color:var(--red)!important;  color:var(--red)!important; }
+    .manual-hint { margin-top:8px; font-size:.65rem; color:var(--text-dim2); font-family:'Crimson Pro',serif; font-style:italic; }
+
+    /* alert config */
+    .alert-rows  { display:flex; flex-direction:column; gap:10px; margin-top:4px; }
+    .alert-row   { display:grid; grid-template-columns:1fr auto auto auto; align-items:center; gap:10px; padding:10px 14px; border-radius:12px; background:var(--surface2); border:1px solid var(--border); transition:border-color .3s, background .3s; }
+    .alert-row.firing { border-color:var(--red); background:var(--red-dim); }
+    .alert-sensor { font-size:.75rem; font-weight:600; letter-spacing:.06em; }
+    .alert-cond  { font-size:.72rem; padding:4px 10px; background:var(--surface3); border:1px solid var(--border2); border-radius:8px; color:var(--text-dim); font-family:'Syne',sans-serif; cursor:pointer; outline:none; }
+    .alert-input { width:64px; padding:4px 8px; text-align:center; background:var(--surface3); border:1px solid var(--border2); border-radius:8px; color:var(--text); font-family:'Syne',sans-serif; font-size:.78rem; outline:none; transition:border-color .2s; }
+    .alert-input:focus { border-color:var(--green); }
+    .alert-en    { width:32px; height:18px; appearance:none; cursor:pointer; background:var(--border2); border-radius:99px; position:relative; transition:background .3s; }
+    .alert-en::before { content:''; position:absolute; width:12px; height:12px; border-radius:50%; background:var(--text-dim); top:3px; left:3px; transition:transform .3s, background .3s; }
+    .alert-en:checked { background:var(--red-dim); border:1px solid var(--red); }
+    .alert-en:checked::before { transform:translateX(14px); background:var(--red); }
+    .save-btn { width:100%; margin-top:12px; padding:10px; background:var(--green-dim); border:1px solid var(--green-mid); border-radius:10px; color:var(--green); font-family:'Syne',sans-serif; font-size:.78rem; font-weight:700; letter-spacing:.08em; cursor:pointer; transition:all .2s; }
+    .save-btn:hover { background:var(--green-mid); }
+    .log-header { display:flex; align-items:center; justify-content:space-between; margin:14px 0 6px; }
+    .log-label  { font-size:.62rem; text-transform:uppercase; letter-spacing:.14em; color:var(--text-dim); }
+    .log-clear  { font-size:.62rem; color:var(--text-dim2); cursor:pointer; }
+    .alert-log  { max-height:120px; overflow-y:auto; background:var(--surface2); border-radius:10px; border:1px solid var(--border); }
+    .log-empty  { padding:12px 14px; font-size:.72rem; color:var(--text-dim2); font-style:italic; font-family:'Crimson Pro',serif; }
+    .log-entry  { display:flex; justify-content:space-between; gap:8px; padding:7px 14px; border-bottom:1px solid var(--border); font-size:.7rem; }
+    .log-entry:last-child { border-bottom:none; }
+    .log-msg    { color:var(--text); }
+    .log-time   { color:var(--text-dim); flex-shrink:0; }
+    .log-entry.warn .log-msg { color:var(--amber); }
+    .log-entry.crit .log-msg { color:var(--red); }
+
+    .footer { max-width:960px; margin:20px auto 0; display:flex; align-items:center; justify-content:space-between; font-size:.65rem; color:var(--text-dim); flex-wrap:wrap; gap:8px; }
+    .sync-flash { animation:flashGreen .5s ease; }
+    @keyframes flashGreen { 0%{color:var(--green)} 100%{color:var(--text-dim)} }
+    .err-banner { display:none; max-width:960px; margin:0 auto 14px; background:var(--red-dim); border:1px solid var(--red); border-radius:12px; padding:10px 16px; font-size:.75rem; color:var(--red); }
+    ::-webkit-scrollbar { width:4px; }
+    ::-webkit-scrollbar-thumb { background:var(--border2); border-radius:99px; }
+  </style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════
+     FULL-SCREEN ALERT MODAL
+     Cannot be missed — covers entire screen
+════════════════════════════════════════════ -->
+<div id="alert-modal">
+  <div class="modal-box">
+    <div class="modal-icon">⚠</div>
+    <div class="modal-title" id="modal-title">Plant Alert</div>
+    <div class="modal-sensor" id="modal-sensor">--</div>
+    <div class="modal-reading">
+      <div>
+        <div class="modal-reading-label" id="modal-reading-label">Current value</div>
+        <div class="modal-threshold" id="modal-threshold">--</div>
+      </div>
+      <div style="text-align:right">
+        <div class="modal-reading-val" id="modal-reading-val">--</div>
+        <div class="modal-reading-unit" id="modal-reading-unit">--</div>
+      </div>
+    </div>
+    <div class="modal-queue hidden" id="modal-queue"></div>
+    <div class="modal-btns">
+      <button class="modal-btn btn-dismiss" onclick="dismissModal()">ACKNOWLEDGE</button>
+      <button class="modal-btn btn-snooze"  onclick="snoozeModal()">SNOOZE 5 MIN</button>
+    </div>
+    <div class="modal-timer"><div class="modal-timer-fill" id="modal-timer-fill"></div></div>
+  </div>
+</div>
+
+<!-- TOAST STACK (bottom-right, secondary notices) -->
+<div id="toast-stack"></div>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="brand">
+    <div class="logo-ring">🌱</div>
+    <div class="brand-text">
+      <h1>PLANT CARE</h1>
+      <p>ESP32-S3 · Firebase RTDB</p>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="alert-bell-btn" onclick="openAlertHistory()" title="Alert history">
+      🔔
+      <div class="bell-badge" id="bell-badge">0</div>
+    </div>
+    <div class="live-pill" id="live-pill">
+      <div class="live-dot"></div>
+      <span id="live-label">connecting…</span>
+    </div>
+  </div>
+</header>
+
+<div class="err-banner" id="err-banner"></div>
+
+<div class="grid">
+
+  <!-- Temperature -->
+  <div class="card span-3" style="--accent-line:#f0a83255">
+    <div class="c-label"><div class="c-icon" style="background:var(--amber-dim);color:var(--amber)">🌡</div>Temperature</div>
+    <div class="c-val" id="temp-val">--</div>
+    <div class="c-unit">degrees celsius</div>
+  </div>
+
+  <!-- Humidity -->
+  <div class="card span-3" style="--accent-line:#5db8f055">
+    <div class="c-label"><div class="c-icon" style="background:var(--blue-dim);color:var(--blue)">💧</div>Humidity</div>
+    <div class="c-val" id="hum-val">--</div>
+    <div class="c-unit">percent RH</div>
+  </div>
+
+  <!-- Soil Moisture -->
+  <div class="card span-6" style="--accent-line:var(--green-mid)">
+    <div class="c-label"><div class="c-icon" style="background:var(--green-dim);color:var(--green)">🪴</div>Soil Moisture</div>
+    <div class="ring-wrap">
+      <svg width="80" height="80" viewBox="0 0 80 80">
+        <circle class="ring-track" cx="40" cy="40" r="26"/>
+        <circle class="ring-fill" id="soil-ring" cx="40" cy="40" r="26" stroke="var(--green)"/>
+        <text class="ring-lbl" id="soil-ring-txt" x="40" y="45" text-anchor="middle">--</text>
+        <text class="ring-sub" x="40" y="58" text-anchor="middle">%</text>
+      </svg>
+      <div style="flex:1">
+        <div class="c-val" id="soil-val" style="font-size:2.6rem">--</div>
+        <div class="c-unit">soil saturation</div>
+        <div class="bar-bg"><div class="bar-fill" id="soil-bar"></div></div>
+        <div class="bar-lbls"><span>DRY</span><span>OPTIMAL</span><span>WET</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Light Level -->
+  <div class="card span-6" style="--accent-line:#f0a83255">
+    <div class="c-label"><div class="c-icon" style="background:var(--amber-dim);color:var(--amber)">☀</div>Light Level</div>
+    <div class="ring-wrap">
+      <svg width="80" height="80" viewBox="0 0 80 80">
+        <circle class="ring-track" cx="40" cy="40" r="26"/>
+        <circle class="ring-fill" id="light-ring" cx="40" cy="40" r="26" stroke="var(--amber)"/>
+        <text class="ring-lbl" id="light-ring-txt" x="40" y="45" text-anchor="middle">--</text>
+        <text class="ring-sub" x="40" y="58" text-anchor="middle">%</text>
+      </svg>
+      <div style="flex:1">
+        <div class="c-val" id="light-val" style="font-size:2.6rem;color:var(--amber)">--</div>
+        <div class="c-unit">light intensity</div>
+        <div style="margin-top:10px;font-size:.7rem;color:var(--text-dim)" id="light-desc">--</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pump Control -->
+  <div class="card span-6" style="--accent-line:#5db8f055">
+    <div class="c-label"><div class="c-icon" style="background:var(--blue-dim);color:var(--blue)">⚡</div>Water Pump</div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div class="pump-badge" id="pump-badge"><span class="dot"></span><span id="pump-text">--</span></div>
+      <div class="mode-tag" id="mode-tag">AUTO</div>
+    </div>
+    <div class="pump-note" id="pump-note">waiting for data</div>
+    <div class="manual-panel">
+      <div class="manual-header">
+        <span class="manual-title">Manual Override</span>
+        <div class="toggle-wrap">
+          <span class="toggle-lbl" id="override-lbl">OFF</span>
+          <label class="toggle">
+            <input type="checkbox" id="override-toggle" onchange="onOverrideToggle(this.checked)"/>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+      <div class="manual-btns">
+        <button class="pump-btn on-btn"  id="btn-on"  onclick="setPump(true)"  disabled>PUMP ON</button>
+        <button class="pump-btn off-btn" id="btn-off" onclick="setPump(false)" disabled>PUMP OFF</button>
+      </div>
+      <div class="manual-hint">Enable override to control the pump manually from this dashboard.</div>
+    </div>
+  </div>
+
+  <!-- Alert Config -->
+  <div class="card span-6" style="--accent-line:#f05d5d55">
+    <div class="c-label"><div class="c-icon" style="background:var(--red-dim);color:var(--red)">🔔</div>Alert Thresholds</div>
+    <div class="alert-rows" id="alert-rows"></div>
+    <button class="save-btn" id="save-btn" onclick="saveAlerts()">SAVE ALERT SETTINGS</button>
+    <div class="log-header">
+      <span class="log-label">Alert History</span>
+      <span class="log-clear" onclick="clearLog()">clear</span>
+    </div>
+    <div class="alert-log" id="alert-log"><div class="log-empty">No alerts triggered yet.</div></div>
+  </div>
+
+</div>
+
+<footer class="footer">
+  <span>Smart Plant Care · ESP32-S3</span>
+  <span>Last sync: <span id="last-sync">--</span></span>
+</footer>
+
+<script>
+// ── Firebase ──────────────────────────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey:      "AIzaSyBcfKljXgucdPWl6J-EXvwZM0snNCjBedw",
+  databaseURL: "https://smartplantcare-1f8f3-default-rtdb.firebaseio.com",
+  projectId:   "smartplantcare-1f8f3",
+};
+firebase.initializeApp(firebaseConfig);
+const db      = firebase.database();
+const dataRef = db.ref('PlantData');
+const ctrlRef = db.ref('Controls');
+
+// ── Alert definitions ─────────────────────────────────────────────────────────
+const ALERT_DEFS = [
+  { key:'soil_low',  fbKey:'soil',     label:'Soil — too dry',  unit:'%',  color:'var(--green)', defCond:'<', defVal:25, icon:'🌵' },
+  { key:'soil_high', fbKey:'soil',     label:'Soil — too wet',  unit:'%',  color:'var(--blue)',  defCond:'>', defVal:85, icon:'💦' },
+  { key:'temp',      fbKey:'temp',     label:'Temperature high',unit:'°C', color:'var(--amber)', defCond:'>', defVal:35, icon:'🔥' },
+  { key:'humidity',  fbKey:'humidity', label:'Humidity high',   unit:'%',  color:'var(--blue)',  defCond:'>', defVal:80, icon:'💧' },
+  { key:'light_low', fbKey:'light',    label:'Light — too low', unit:'%',  color:'var(--amber)', defCond:'<', defVal:15, icon:'🌑' },
+];
+
+// Load saved settings
+let alertSettings = (() => {
+  try { return JSON.parse(localStorage.getItem('plantAlerts_v2')) || null; } catch { return null; }
+})() || ALERT_DEFS.map(a => ({ key:a.key, cond:a.defCond, value:a.defVal, enabled:false }));
+
+// ── Alert queue system ────────────────────────────────────────────────────────
+// Alerts go into a queue; modal shows them one at a time
+// User MUST acknowledge each one — no auto-dismiss unless snoozed
+let alertQueue        = [];   // pending alerts to show
+let snoozedUntil      = {};   // key → timestamp when snooze expires
+let lastAlertFired    = {};   // debounce: per key
+let alertLog          = [];
+let modalActive       = false;
+let modalTimerHandle  = null;
+let unreadCount       = 0;
+let latestSensorData  = {};
+
+function enqueueAlert(def, value, settings) {
+  const now = Date.now();
+  // Debounce: don't re-fire same alert within 60s unless snoozed
+  if (lastAlertFired[def.key] && now - lastAlertFired[def.key] < 60000) return;
+  // Snooze check
+  if (snoozedUntil[def.key] && now < snoozedUntil[def.key]) return;
+
+  lastAlertFired[def.key] = now;
+  const condWord = settings.cond === '<' ? 'below' : 'above';
+  const msg = `${def.label}: ${value}${def.unit} (${condWord} ${settings.value}${def.unit})`;
+  const entry = { def, value, settings, msg, time: new Date().toLocaleTimeString() };
+
+  alertQueue.push(entry);
+  addLog(msg, Math.abs(value - settings.value) > settings.value * 0.2 ? 'crit' : 'warn');
+
+  unreadCount++;
+  updateBellBadge();
+  sendBrowserNotif(def.icon + ' ' + def.label, msg);
+
+  // Show immediately if no modal is currently open
+  if (!modalActive) showNextModal();
+}
+
+function showNextModal() {
+  if (!alertQueue.length) { modalActive = false; return; }
+  modalActive = true;
+  const entry = alertQueue[0];   // peek — don't remove until acknowledged
+  const { def, value, settings } = entry;
+
+  document.getElementById('modal-title').textContent   = def.icon + '  ' + def.label.toUpperCase();
+  document.getElementById('modal-sensor').textContent  = def.label + ' sensor alert';
+  document.getElementById('modal-reading-label').textContent = 'Current reading';
+  document.getElementById('modal-reading-val').textContent   = value;
+  document.getElementById('modal-reading-unit').textContent  = def.unit;
+  document.getElementById('modal-threshold').textContent     =
+    `Threshold: ${settings.cond === '<' ? 'below' : 'above'} ${settings.value}${def.unit}`;
+
+  const remaining = alertQueue.length - 1;
+  const queueEl   = document.getElementById('modal-queue');
+  if (remaining > 0) {
+    queueEl.textContent = `+${remaining} more alert${remaining > 1 ? 's' : ''} waiting`;
+    queueEl.classList.remove('hidden');
+  } else {
+    queueEl.classList.add('hidden');
+  }
+
+  // Show modal
+  const modal = document.getElementById('alert-modal');
+  modal.classList.add('visible');
+
+  // Reset timer bar — NO auto-dismiss. Timer is decorative showing time since alert fired.
+  const fill = document.getElementById('modal-timer-fill');
+  fill.style.transition = 'none';
+  fill.style.width = '100%';
+  // Slowly drain over 5 minutes (just visual indicator, not auto-close)
+  requestAnimationFrame(() => {
+    fill.style.transition = 'width 300s linear';
+    fill.style.width = '0%';
+  });
+
+  // Play alert sound (beep using Web Audio API)
+  playAlertBeep();
+
+  // Vibrate on mobile if supported
+  if ('vibrate' in navigator) navigator.vibrate([300, 100, 300]);
+}
+
+function dismissModal() {
+  alertQueue.shift();   // remove acknowledged alert
+  closeModal();
+  if (alertQueue.length) {
+    setTimeout(showNextModal, 400);   // brief pause before next one
+  }
+}
+
+function snoozeModal() {
+  if (!alertQueue.length) return;
+  const entry = alertQueue.shift();
+  snoozedUntil[entry.def.key] = Date.now() + 5 * 60 * 1000;   // 5 minutes
+  closeModal();
+  showToast(`${entry.def.icon} ${entry.def.label} snoozed for 5 minutes`);
+  if (alertQueue.length) setTimeout(showNextModal, 400);
+}
+
+function closeModal() {
+  document.getElementById('alert-modal').classList.remove('visible');
+  if (modalTimerHandle) { clearTimeout(modalTimerHandle); modalTimerHandle = null; }
+  modalActive = !!alertQueue.length;
+}
+
+// ── Alert sound ───────────────────────────────────────────────────────────────
+function playAlertBeep() {
+  try {
+    const ctx  = new (window.AudioContext || window.webkitAudioContext)();
+    const play = (freq, start, dur) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = freq;
+      o.type = 'sine';
+      g.gain.setValueAtTime(0.3, ctx.currentTime + start);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+      o.start(ctx.currentTime + start);
+      o.stop(ctx.currentTime + start + dur);
+    };
+    play(880, 0,    0.15);
+    play(880, 0.2,  0.15);
+    play(1100,0.4,  0.25);
+  } catch {}
+}
+
+// ── Bell badge ────────────────────────────────────────────────────────────────
+function updateBellBadge() {
+  const badge = document.getElementById('bell-badge');
+  badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+  badge.classList.toggle('visible', unreadCount > 0);
+}
+function openAlertHistory() {
+  unreadCount = 0;
+  updateBellBadge();
+  document.getElementById('alert-log').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ── Toast (secondary, non-blocking) ──────────────────────────────────────────
+function showToast(msg) {
+  const stack = document.getElementById('toast-stack');
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.innerHTML = `<div class="toast-title">NOTICE</div>${msg}`;
+  const go = () => { t.style.animation='toastOut .25s ease forwards'; setTimeout(()=>t.remove(),250); };
+  t.onclick = go;
+  stack.appendChild(t);
+  setTimeout(go, 5000);
+}
+
+// ── Browser push notification ─────────────────────────────────────────────────
+function sendBrowserNotif(title, body) {
+  if (!('Notification' in window)) return;
+  const send = () => new Notification(title, { body, icon: '' });
+  if (Notification.permission === 'granted') send();
+  else if (Notification.permission !== 'denied') Notification.requestPermission().then(p => { if (p==='granted') send(); });
+}
+
+// ── Alert config UI ───────────────────────────────────────────────────────────
+function buildAlertRows() {
+  const c = document.getElementById('alert-rows');
+  c.innerHTML = '';
+  ALERT_DEFS.forEach((def, i) => {
+    const s   = alertSettings[i] || { cond:def.defCond, value:def.defVal, enabled:false };
+    const row = document.createElement('div');
+    row.className = 'alert-row'; row.id = 'arow-' + def.key;
+    row.innerHTML = `
+      <span class="alert-sensor" style="color:${def.color}">${def.icon} ${def.label}</span>
+      <select class="alert-cond" id="cond-${def.key}">
+        <option value="<" ${s.cond==='<'?'selected':''}>Below</option>
+        <option value=">" ${s.cond==='>'?'selected':''}>Above</option>
+      </select>
+      <input class="alert-input" id="val-${def.key}" type="number" min="0" max="200" value="${s.value}"/>
+      <input class="alert-en" type="checkbox" id="en-${def.key}" ${s.enabled?'checked':''}/>`;
+    c.appendChild(row);
+  });
+}
+
+function saveAlerts() {
+  alertSettings = ALERT_DEFS.map(def => ({
+    key:     def.key,
+    cond:    document.getElementById('cond-'+def.key).value,
+    value:   parseFloat(document.getElementById('val-' +def.key).value),
+    enabled: document.getElementById('en-'  +def.key).checked,
+  }));
+  try { localStorage.setItem('plantAlerts_v2', JSON.stringify(alertSettings)); } catch {}
+  const btn = document.getElementById('save-btn');
+  btn.textContent = 'SAVED ✓'; btn.style.background='var(--green-mid)';
+  setTimeout(()=>{ btn.textContent='SAVE ALERT SETTINGS'; btn.style.background=''; }, 2000);
+  if (Object.keys(latestSensorData).length) checkAlerts(latestSensorData);
+}
+
+function checkAlerts(data) {
+  ALERT_DEFS.forEach((def, i) => {
+    const s   = alertSettings[i];
+    const row = document.getElementById('arow-'+def.key);
+    if (!s || !s.enabled) { if (row) row.classList.remove('firing'); return; }
+    const val = data[def.fbKey];
+    if (val === undefined || val === null) return;
+    const triggered = s.cond === '<' ? val < s.value : val > s.value;
+    if (row) row.classList.toggle('firing', triggered);
+    if (triggered) enqueueAlert(def, val, s);
+  });
+}
+
+// ── Alert log ─────────────────────────────────────────────────────────────────
+function addLog(msg, level) {
+  alertLog.unshift({ msg, level, time: new Date().toLocaleTimeString() });
+  if (alertLog.length > 50) alertLog.pop();
+  renderLog();
+}
+function renderLog() {
+  const el = document.getElementById('alert-log');
+  if (!alertLog.length) { el.innerHTML='<div class="log-empty">No alerts triggered yet.</div>'; return; }
+  el.innerHTML = alertLog.map(e =>
+    `<div class="log-entry ${e.level}"><span class="log-msg">${e.msg}</span><span class="log-time">${e.time}</span></div>`
+  ).join('');
+}
+function clearLog() { alertLog=[]; renderLog(); }
+
+// ── Pump control ──────────────────────────────────────────────────────────────
+function onOverrideToggle(on) {
+  document.getElementById('btn-on').disabled  = !on;
+  document.getElementById('btn-off').disabled = !on;
+  document.getElementById('override-lbl').textContent = on ? 'ON' : 'OFF';
+  const t = document.getElementById('mode-tag');
+  t.textContent = on ? 'MANUAL' : 'AUTO'; t.className = 'mode-tag'+(on?' manual':'');
+  ctrlRef.update({ pump_override:on });
+  if (!on) {
+    ctrlRef.update({ pump_manual:'OFF' });
+    document.getElementById('btn-on').className  = 'pump-btn on-btn';
+    document.getElementById('btn-off').className = 'pump-btn off-btn';
+  }
+}
+function setPump(on) {
+  ctrlRef.update({ pump_override:true, pump_manual:on?'ON':'OFF' });
+  document.getElementById('btn-on').className  = 'pump-btn on-btn'  +(on ?' btn-active-on':'');
+  document.getElementById('btn-off').className = 'pump-btn off-btn' +(!on?' btn-active-off':'');
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const $    = id => document.getElementById(id);
+const CIRC = 2 * Math.PI * 26;
+function setLive(on) { $('live-pill').className='live-pill'+(on?' online':''); $('live-label').textContent=on?'live':'offline'; }
+function setRing(rId,tId,pct,color) { $(rId).style.strokeDashoffset=CIRC-(pct/100)*CIRC; $(rId).style.stroke=color; $(tId).textContent=pct; }
+function lightDesc(v) {
+  if (v===null||v===undefined) return '--';
+  if (v<10)  return 'Very dark — grow light needed';
+  if (v<30)  return 'Low light — shade tolerant only';
+  if (v<55)  return 'Moderate — indirect sunlight';
+  if (v<78)  return 'Bright — near a window';
+  return 'Intense — direct sunlight';
+}
+
+// ── Firebase listener ─────────────────────────────────────────────────────────
+dataRef.on('value', snap => {
+  const d = snap.val();
+  if (!d) { $('err-banner').style.display='block'; $('err-banner').textContent='⚠ No data yet — check ESP32.'; setLive(false); return; }
+  $('err-banner').style.display='none'; setLive(true);
+  latestSensorData = d;
+
+  const temp  = d.temp     !== undefined ? Number(d.temp)     : null;
+  const hum   = d.humidity !== undefined ? Number(d.humidity) : null;
+  const soil  = d.soil     !== undefined ? Number(d.soil)     : null;
+  const light = d.light    !== undefined ? Number(d.light)    : null;
+
+  $('temp-val').textContent = temp  !== null ? temp.toFixed(1)  : '--';
+  $('temp-val').className   = 'c-val'+(temp>38?' alert':temp>33?' warn':'');
+  $('hum-val').textContent  = hum   !== null ? hum.toFixed(1)   : '--';
+  $('hum-val').className    = 'c-val'+(hum>80?' warn':hum<20?' alert':'');
+
+  $('soil-val').textContent = soil  !== null ? soil  : '--';
+  $('soil-val').className   = 'c-val'+(soil!==null&&soil<30?' warn':'');
+  $('soil-bar').style.width = soil  !== null ? soil+'%' : '0%';
+  if (soil!==null) setRing('soil-ring','soil-ring-txt',soil, soil<30?'var(--amber)':soil>80?'var(--blue)':'var(--green)');
+
+  $('light-val').textContent  = light !== null ? light : '--';
+  $('light-desc').textContent = lightDesc(light);
+  if (light!==null) setRing('light-ring','light-ring-txt',light, light<20?'var(--red)':light<50?'var(--text-dim)':'var(--amber)');
+
+  const isOn=d.pump==='ON', isManual=d.mode==='MANUAL';
+  $('pump-badge').className  = 'pump-badge'+(isOn?' active':'');
+  $('pump-text').textContent = d.pump||'--';
+  $('pump-note').textContent = isOn
+    ? (isManual?'Running — manually activated':'Watering — soil below 30%')
+    : (isManual?'Stopped — manually deactivated':(soil!==null?`Soil OK at ${soil}%`:'Monitoring…'));
+
+  const ts = $('last-sync');
+  ts.textContent = new Date().toLocaleTimeString();
+  ts.classList.remove('sync-flash'); void ts.offsetWidth; ts.classList.add('sync-flash');
+
+  checkAlerts({ temp, humidity:hum, soil, light });
+
+}, err => { $('err-banner').style.display='block'; $('err-banner').textContent='⚠ Firebase error: '+err.message; setLive(false); });
+
+// Restore override toggle state
+ctrlRef.once('value', snap => {
+  const c = snap.val();
+  if (c && c.pump_override===true) {
+    $('override-toggle').checked = true; onOverrideToggle(true);
+    $('btn-on').className  = 'pump-btn on-btn'  +(c.pump_manual==='ON' ?' btn-active-on':'');
+    $('btn-off').className = 'pump-btn off-btn' +(c.pump_manual!=='ON'?' btn-active-off':'');
+  }
+});
+
+// Request notification permission on first click
+document.addEventListener('click', () => {
+  if ('Notification' in window && Notification.permission==='default') Notification.requestPermission();
+}, { once:true });
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+buildAlertRows();
+</script>
+</body>
+</html>
